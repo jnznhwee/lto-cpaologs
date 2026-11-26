@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Login — PAT/SMT Logs System (LTO CPAO)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body class="min-h-screen flex items-center justify-center p-4 bg-slate-950 text-slate-100">
+    <div class="w-full max-w-md glass-panel rounded-2xl p-6 sm:p-8 shadow-2xl space-y-6">
+        <div class="text-center space-y-2">
+            <div class="w-12 h-12 mx-auto rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center font-extrabold text-base text-white shadow-lg">LTO</div>
+            <h1 class="text-xl font-extrabold text-white tracking-tight">PAT/SMT Logs System</h1>
+            <p class="text-xs text-slate-400">Land Transportation Office &bull; Central Public Assistance Office</p>
+        </div>
+
+        <div id="loginNoticeBanner" class="hidden px-3.5 py-2.5 rounded-xl bg-amber-950/70 border border-amber-700/60 text-amber-200 text-xs font-semibold"></div>
+        <div id="loginErrorBanner" class="hidden px-3.5 py-2.5 rounded-xl bg-rose-950/70 border border-rose-700/60 text-rose-200 text-xs font-semibold"></div>
+
+        <form id="loginForm" onsubmit="handleLoginSubmit(event)" class="space-y-4 text-xs">
+            <div>
+                <label for="loginUsername" class="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Username</label>
+                <input type="text" id="loginUsername" required autocomplete="username" placeholder="e.g., admin36" class="w-full bg-slate-950 border border-slate-800 focus:border-sky-500 rounded-xl px-3.5 py-2.5 text-white outline-none" />
+            </div>
+            <div>
+                <div class="flex items-center justify-between mb-1.5">
+                    <label for="loginPassword" class="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Password</label>
+                    <button type="button" id="btnTogglePasswordVisibility" onclick="toggleLoginPasswordVisibility()" aria-pressed="false" aria-label="Show password" class="text-[11px] font-bold text-sky-400 hover:text-sky-300 transition cursor-pointer">
+                        Show password
+                    </button>
+                </div>
+                <input type="password" id="loginPassword" required autocomplete="current-password" placeholder="Enter your password" class="w-full bg-slate-950 border border-slate-800 focus:border-sky-500 rounded-xl px-3.5 py-2.5 text-white outline-none" />
+            </div>
+            <button type="submit" id="btnLoginSubmit" class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-extrabold rounded-xl shadow-lg transition cursor-pointer">
+                Sign In to Portal
+            </button>
+        </form>
+    </div>
+
+    <script>
+        const LOGIN_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxDm6TE_t2qJGQCCNsVCluBw552_797Av8I6NNuMdZSGnsoGf_GGm49kcLzTwJ_ck2t/exec";
+        const FALLBACK_USERS = [
+            { username: "admin36", name: "Admin 36", role: "Super Admin", defaultPortal: "FACEBOOK", pass: "admin123", logColor: "#9a4e2a", canReports: true, canDeleteLogs: true, canManageUsers: true, canAccessSettings: true },
+            { username: "janzen", name: "Janzen Huwee N. Baltores", role: "Admin", defaultPortal: "FACEBOOK", pass: "password", logColor: "Default", canReports: false, canDeleteLogs: false, canManageUsers: false, canAccessSettings: false }
+        ];
+
+        function toggleLoginPasswordVisibility() {
+            const inputEl = document.getElementById("loginPassword");
+            const btnEl = document.getElementById("btnTogglePasswordVisibility");
+            if (!inputEl) return;
+            const makeVisible = inputEl.type === "password";
+            inputEl.type = makeVisible ? "text" : "password";
+            if (btnEl) {
+                btnEl.textContent = makeVisible ? "Hide password" : "Show password";
+                btnEl.setAttribute("aria-pressed", makeVisible ? "true" : "false");
+                btnEl.setAttribute("aria-label", makeVisible ? "Hide password" : "Show password");
+            }
+        }
+
+        (function applySavedLoginTheme() {
+            let mode = "dark";
+            try {
+                const rawSettings = localStorage.getItem("LTO_CPAO_SETTINGS_2026");
+                if (rawSettings) {
+                    const parsed = JSON.parse(rawSettings);
+                    if (parsed && parsed.preferences && parsed.preferences.colorMode === "light") {
+                        mode = "light";
+                    }
+                }
+            } catch (e) {}
+            if (mode === "light") {
+                document.documentElement.setAttribute("data-theme", "light");
+                document.body.classList.add("light-mode");
+            }
+        })();
+
+        (function initLoginReason() {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get("reason") === "idle") {
+                const banner = document.getElementById("loginNoticeBanner");
+                if (banner) {
+                    banner.textContent = "Your session expired due to inactivity. Please sign in again.";
+                    banner.classList.remove("hidden");
+                }
+            }
+        })();
+
+        function showLoginError(msg) {
+            const el = document.getElementById("loginErrorBanner");
+            if (!el) return;
+            el.textContent = msg;
+            el.classList.remove("hidden");
+        }
+
+        async function resolveUsersList() {
+            let cached = [];
+            try {
+                const raw = localStorage.getItem("LTO_CPAO_USERS_2026");
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (Array.isArray(parsed) && parsed.length > 0) cached = parsed;
+                }
+            } catch (e) {}
+
+            try {
+                const resp = await fetch(`${LOGIN_APPS_SCRIPT_URL}?action=getUsers&sheet=Users&t=${Date.now()}`, { mode: "cors" });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const list = Array.isArray(data) ? data : (data && Array.isArray(data.users) ? data.users : []);
+                    if (list.length > 0) {
+                        localStorage.setItem("LTO_CPAO_USERS_2026", JSON.stringify(list));
+                        return list;
+                    }
+                }
+            } catch (e) {}
+
+            return cached.length > 0 ? cached : FALLBACK_USERS;
+        }
+
+        async function handleLoginSubmit(e) {
+            e.preventDefault();
+            const errEl = document.getElementById("loginErrorBanner");
+            if (errEl) errEl.classList.add("hidden");
+
+            const usernameInput = (document.getElementById("loginUsername")?.value || "").trim();
+            const passwordInput = (document.getElementById("loginPassword")?.value || "").trim();
+            const btn = document.getElementById("btnLoginSubmit");
+
+            if (!usernameInput || !passwordInput) {
+                showLoginError("Please enter both username and password.");
+                return;
+            }
+
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = "Verifying credentials...";
+            }
+
+            try {
+                const users = await resolveUsersList();
+                const matched = users.find(u =>
+                    String(u.username || "").trim().toLowerCase() === usernameInput.toLowerCase() &&
+                    String(u.pass || "").trim() === passwordInput
+                );
+
+                if (!matched) {
+                    showLoginError("Invalid username or password. Please try again.");
+                    return;
+                }
+
+                const roleLower = String(matched.role || "Admin").toLowerCase();
+                const sessionUser = {
+                    username: matched.username,
+                    name: matched.name || matched.username,
+                    role: matched.role || "Admin",
+                    defaultPortal: matched.defaultPortal || "FACEBOOK",
+                    pass: matched.pass,
+                    logColor: localStorage.getItem("LTO_COLOR_" + matched.username) || matched.logColor || "Default",
+                    canReports: matched.canReports !== undefined ? !!matched.canReports : (roleLower !== "admin"),
+                    canDeleteLogs: matched.canDeleteLogs !== undefined ? !!matched.canDeleteLogs : (roleLower !== "admin"),
+                    canManageUsers: matched.canManageUsers !== undefined ? !!matched.canManageUsers : (roleLower === "super admin"),
+                    canAccessSettings: matched.canAccessSettings !== undefined ? !!matched.canAccessSettings : (roleLower === "super admin")
+                };
+
+                sessionStorage.setItem("LTO_ACTIVE_USER", JSON.stringify(sessionUser));
+                window.location.replace("index.html");
+            } catch (err) {
+                showLoginError("Unable to complete sign-in. Please check your connection and try again.");
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = "Sign In to Portal";
+                }
+            }
+        }
+    </script>
+</body>
+</html>
