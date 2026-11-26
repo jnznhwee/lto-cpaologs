@@ -4264,6 +4264,34 @@ function buildPortalDistributionChartsHtml(portalStatusRows, totalReceived) {
     `;
 }
 
+function isTicketTypeLabel(val, ticketList = []) {
+    const clean = String(val || "").trim().toLowerCase();
+    if (!clean) return false;
+    if (clean === "type of ticket" || clean === "ticket type") return true;
+
+    const knownTypes = new Set([
+        "simple (request for information, feedback, etc.)",
+        "complex (needs verification)",
+        "highly technical (endorsement)",
+        "simple",
+        "complex",
+        "highly technical",
+        ...(AppState.settings?.ticketTypes || []).map(x => String(x || "").trim().toLowerCase()),
+        ...ticketList.map(t => String(t?.ticketType || "").trim().toLowerCase())
+    ]);
+    return knownTypes.has(clean);
+}
+
+function isValidPortalColumnName(val) {
+    const clean = String(val || "").trim().toUpperCase();
+    if (!clean) return false;
+    if (/^\d+$/.test(clean)) return false;
+    if (/^(CPAO|IMKC|CDMPAO|LTO\s*MAILBOX|ARTA|8888|PACE|CCB)[-_ ]?\d{4,}/i.test(clean)) return false;
+    if (/^[A-Z]{2,8}-\d{4,8}-\d+-\d+$/i.test(clean)) return false;
+    if (isTicketTypeLabel(clean)) return false;
+    return true;
+}
+
 function generateReport() {
     if (!canUserGenerateReports()) return;
     setReportPreviewEditState(false);
@@ -4298,18 +4326,18 @@ function generateReport() {
     const portalSet = [];
     (AppState.settings.platforms || []).forEach(p => {
         const name = String(typeof p === 'string' ? p : p.name).trim().toUpperCase();
-        if (name && !/^(CPAO|IMKC|ARTA|8888|PACE|CCB)-\d+/.test(name) && !portalSet.includes(name)) portalSet.push(name);
+        if (isValidPortalColumnName(name) && !portalSet.includes(name)) portalSet.push(name);
     });
     filtered.forEach(t => {
         const p = String(t.platform || '').trim().toUpperCase();
-        if (p && !/^(CPAO|IMKC|ARTA|8888|PACE|CCB)-\d+/.test(p) && !portalSet.includes(p)) portalSet.push(p);
+        if (isValidPortalColumnName(p) && !portalSet.includes(p)) portalSet.push(p);
     });
 
-    // 1. Top 10 concerns / issues + bar & pie distribution (Concern Category only, never Ticket Type)
+    // 1. Top 10 concerns / issues + bar & pie distribution (Concern Category only, excluding TYPE OF TICKET)
     const concernCounts = {};
     filtered.forEach(t => {
         const rawCat = String(t.category || '').trim();
-        if (!rawCat) return;
+        if (!rawCat || isTicketTypeLabel(rawCat, filtered)) return;
         concernCounts[rawCat] = (concernCounts[rawCat] || 0) + 1;
     });
     const sortedAllConcerns = Object.entries(concernCounts)
@@ -4345,30 +4373,19 @@ function generateReport() {
         }).join('')
         : `<p class="text-xs text-slate-500 italic">No Top 10 bar data in this period.</p>`;
 
-    // 2. Full list of ALL concern categories + tally per portal (Portals/Platforms only, no ticket numbers)
-    const cleanPortalsOnly = [];
-    (AppState.settings.platforms || []).forEach(p => {
-        const pName = String(typeof p === 'string' ? p : p.name).trim().toUpperCase();
-        if (pName && !/^(CPAO|IMKC|ARTA|8888|PACE|CCB)-\d+/.test(pName) && !cleanPortalsOnly.includes(pName)) {
-            cleanPortalsOnly.push(pName);
-        }
-    });
-    filtered.forEach(t => {
-        const pName = String(t.platform || '').trim().toUpperCase();
-        if (pName && !/^(CPAO|IMKC|ARTA|8888|PACE|CCB)-\d+/.test(pName) && !cleanPortalsOnly.includes(pName)) {
-            cleanPortalsOnly.push(pName);
-        }
-    });
+    // 2. Full list of ALL concern categories + raw tally per portal (Portals only, no ticket numbers)
+    const cleanPortalsOnly = [...portalSet];
 
     const allConcernNamesSet = new Set();
     CATEGORY_GROUPS.forEach(grp => {
         (AppState.settings.categoryGroups[grp] || []).forEach(c => {
-            if (String(c || '').trim()) allConcernNamesSet.add(String(c).trim());
+            const cleanC = String(c || '').trim();
+            if (cleanC && !isTicketTypeLabel(cleanC, filtered)) allConcernNamesSet.add(cleanC);
         });
     });
     filtered.forEach(t => {
         const c = String(t.category || '').trim();
-        if (c) allConcernNamesSet.add(c);
+        if (c && !isTicketTypeLabel(c, filtered)) allConcernNamesSet.add(c);
     });
 
     const allConcernsList = Array.from(allConcernNamesSet).sort((a, b) => {
@@ -4390,7 +4407,7 @@ function generateReport() {
                 const cnt = filtered.filter(t => {
                     const tCat = String(t.category || '').trim();
                     const tPlat = String(t.platform || '').trim().toUpperCase();
-                    return tCat && tCat.toLowerCase() === catName.toLowerCase() && tPlat === pName;
+                    return tCat && !isTicketTypeLabel(tCat, filtered) && tCat.toLowerCase() === catName.toLowerCase() && tPlat === pName;
                 }).length;
                 rowTotal += cnt;
                 allConcernsPortalTotals[pName] += cnt;
@@ -4422,7 +4439,7 @@ function generateReport() {
     const portalStatusSummaryData = [];
 
     const portalStatusRowsHtml = portalSet.map(pName => {
-        const pTickets = filtered.filter(t => String(t.platform || 'OTHER').trim().toUpperCase() === pName);
+        const pTickets = filtered.filter(t => String(t.platform || '').trim().toUpperCase() === pName);
         const ack = pTickets.length;
         const res = pTickets.filter(t => String(t.status || '').trim().toLowerCase() === 'closed').length;
         const pend = ack - res;
